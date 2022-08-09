@@ -10,6 +10,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use structopt::StructOpt;
+use url::Url;
 use warp::Filter;
 
 type Res<T> = Result<T, Box<dyn std::error::Error>>;
@@ -44,33 +45,51 @@ impl Args {
     }
 }
 
+fn url_from_bhttp(request: &Message) -> Res<Url> {
+    let control = request.control();
+    eprintln!("request: authority {:?}", control.authority());
+    if let Some(host) = request.header().get(b"host") {
+        let host = std::str::from_utf8(host)?;
+        eprintln!("request: host {}", &host);
+        // FIXME: map error
+        let scheme = control.scheme().unwrap();
+        let scheme = std::str::from_utf8(scheme)?;
+        eprintln!("request: scheme {}", &scheme);
+        let temp = format!("{}://{}", scheme, host);
+        let mut url = Url::parse(&temp)?;
+        if let Some(path) = control.path() {
+            let path = std::str::from_utf8(path)?;
+            eprintln!("request: path {}", &path);
+            url.set_path(path);
+        }
+        return Ok(url);
+    }
+
+    Err("Couldn't read target url!".into())
+}
+
 fn generate_reply(
     ohttp_ref: &Arc<Mutex<OhttpServer>>,
     enc_request: &[u8],
     mode: Mode,
 ) -> Res<Vec<u8>> {
-    // Decrypt and parse the inner response.
+    // Decrypt and parse the inner request.
     let mut ohttp = ohttp_ref.lock().unwrap();
     let (request, server_response) = ohttp.decapsulate(enc_request)?;
     let bin_request = Message::read_bhttp(&mut BufReader::new(&request[..]))?;
 
-    eprintln!("request: authority {:?}", bin_request.control().authority());
-    if let Some(host) = bin_request.header().get(b"host") {
-        if let Ok(s) = std::str::from_utf8(host) {
-            eprintln!("request: host {}", s);
-            if let Ok(h) = url::Host::parse(s) {
-                eprintln!("request: host {}", h);
-            }
-        } else {
-            eprintln!("request: couldn't parse host value {:?}", host);
-        }
-    }
+    // Convert to something we can send out.
+    let url = url_from_bhttp(&bin_request)?;
+    eprintln!("request: url {}", &url);
+
     let mut bin_response = Message::response(200);
     bin_response.write_content(b"Received:\r\n---8<---\r\n");
     let mut tmp = Vec::new();
     bin_request.write_http(&mut tmp)?;
     bin_response.write_content(&tmp);
     bin_response.write_content(b"--->8---\r\n");
+    let status = format!("Request url {}\r\n", &url);
+    bin_response.write_content(&status);
 
     let mut response = Vec::new();
     bin_response.write_bhttp(mode, &mut response)?;
