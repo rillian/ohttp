@@ -49,10 +49,22 @@ fn generate_reply(
     enc_request: &[u8],
     mode: Mode,
 ) -> Res<Vec<u8>> {
+    // Decrypt and parse the inner response.
     let mut ohttp = ohttp_ref.lock().unwrap();
     let (request, server_response) = ohttp.decapsulate(enc_request)?;
     let bin_request = Message::read_bhttp(&mut BufReader::new(&request[..]))?;
 
+    eprintln!("request: authority {:?}", bin_request.control().authority());
+    if let Some(host) = bin_request.header().get(b"host") {
+        if let Ok(s) = std::str::from_utf8(host) {
+            eprintln!("request: host {}", s);
+            if let Ok(h) = url::Host::parse(s) {
+                eprintln!("request: host {}", h);
+            }
+        } else {
+            eprintln!("request: couldn't parse host value {:?}", host);
+        }
+    }
     let mut bin_response = Message::response(200);
     bin_response.write_content(b"Received:\r\n---8<---\r\n");
     let mut tmp = Vec::new();
