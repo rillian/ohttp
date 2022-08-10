@@ -109,7 +109,12 @@ fn generate_reply(
         // pass an error code through to the client.
         return Ok(encoded);
     }
-
+    if url.domain().filter(|name| name == &"p3a.brave.software").is_none() {
+        // Maybe should be 403?
+        let response = err_response("Target domain not allowed");
+        let encoded = enc_message(server_response, response, mode)?;
+        return Ok(encoded);
+    }
 
     let mut bin_response = Message::response(200);
     bin_response.write_content(b"Received:\r\n---8<---\r\n");
