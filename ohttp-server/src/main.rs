@@ -4,6 +4,7 @@ use bhttp::{Message, Mode};
 use ohttp::{
     hpke::{Aead, Kdf, Kem},
     KeyConfig, Server as OhttpServer, SymmetricSuite,
+    ServerResponse,
 };
 use std::io::BufReader;
 use std::net::SocketAddr;
@@ -68,6 +69,24 @@ fn url_from_bhttp(request: &Message) -> Res<Url> {
     Err("Couldn't read target url!".into())
 }
 
+// Construct a 'bad request' error response
+fn err_response(message: &str) -> Message {
+    let mut response = Message::response(400);
+    response.write_content(message);
+    response.write_content("\r\n");
+
+    response
+}
+
+/// Encapsulate a bhttp message
+fn enc_message(state: ServerResponse, message: Message, mode: Mode) -> Res<Vec<u8>> {
+    let mut buffer = Vec::new();
+    message.write_bhttp(mode, &mut buffer)?;
+    let encoded = state.encapsulate(&buffer)?;
+
+    Ok(encoded)
+}
+
 fn generate_reply(
     ohttp_ref: &Arc<Mutex<OhttpServer>>,
     enc_request: &[u8],
@@ -81,6 +100,16 @@ fn generate_reply(
     // Convert to something we can send out.
     let url = url_from_bhttp(&bin_request)?;
     eprintln!("request: url {}", &url);
+
+    // Validate against our policy.
+    if url.scheme() != "https" {
+        let response = err_response("request must but https");
+        let encoded = enc_message(server_response, response, mode)?;
+        // Received the message ok, so tell proxy success, but
+        // pass an error code through to the client.
+        return Ok(encoded);
+    }
+
 
     let mut bin_response = Message::response(200);
     bin_response.write_content(b"Received:\r\n---8<---\r\n");
