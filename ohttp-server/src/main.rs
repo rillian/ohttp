@@ -109,12 +109,49 @@ fn generate_reply(
         // pass an error code through to the client.
         return Ok(encoded);
     }
-    if url.domain().filter(|name| name == &"p3a.brave.software").is_none() {
+    if url.domain().filter(|name| name == &"p3a-json.bravesoftware.com").is_none() {
         // Maybe should be 403?
         let response = err_response("Target domain not allowed");
         let encoded = enc_message(server_response, response, mode)?;
         return Ok(encoded);
     }
+    let status = format!("Request url {}\r\n", &url);
+
+    eprintln!("Constructing request {}", &url);
+    let client = ureq::AgentBuilder::new()
+        .https_only(true)
+        .timeout(std::time::Duration::from_secs(2))
+        .build();
+    let fwd = match bin_request.control().method() {
+        Some(b"post") | Some(b"POST") => {
+            // Forward the request body
+            let content = bin_request.content();
+            eprintln!("  ... post {} bytes", content.len());
+            client.post(url.as_str())
+                .set("Content-Type", "application/json")
+                .set("X-Brave-P3A", "?1")
+                .send_bytes(content)
+        },
+        Some(b"get") | Some(b"GET") => {
+            eprintln!("  ... get");
+            client.get(url.as_str()).call()
+        },
+        Some(method) => {
+            let name = std::str::from_utf8(method)?;
+            eprintln!("  ... unsupported method {}", name);
+            let response = err_response("Method not allowed");
+            return Ok(enc_message(server_response, response, mode)?);
+        },
+        None => {
+            eprintln!("  ... no method supplied!");
+            let response = err_response("No HTTP method supplied");
+            return Ok(enc_message(server_response, response, mode)?);
+        },
+    };
+    // FIXME: copy headers
+    eprintln!("  ureq returned {:?}", fwd);
+    let inner_response = fwd?;
+    eprintln!("upstream: {:?}", inner_response);
 
     let mut bin_response = Message::response(200);
     bin_response.write_content(b"Received:\r\n---8<---\r\n");
@@ -122,7 +159,6 @@ fn generate_reply(
     bin_request.write_http(&mut tmp)?;
     bin_response.write_content(&tmp);
     bin_response.write_content(b"--->8---\r\n");
-    let status = format!("Request url {}\r\n", &url);
     bin_response.write_content(&status);
 
     let mut response = Vec::new();
