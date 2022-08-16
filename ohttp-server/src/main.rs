@@ -160,6 +160,11 @@ fn generate_reply(
     bin_response.write_content(&tmp);
     bin_response.write_content(b"--->8---\r\n");
     bin_response.write_content(&status);
+    let response = format!("Response {} {} {}\r\n",
+        inner_response.status(),
+        inner_response.status_text(),
+        inner_response.get_url());
+    bin_response.write_content(&response);
 
     let mut response = Vec::new();
     bin_response.write_bhttp(mode, &mut response)?;
